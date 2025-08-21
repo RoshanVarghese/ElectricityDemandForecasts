@@ -25,7 +25,7 @@ You can run this Gradio application either locally on your machine or directly i
 
 The easiest way to get started is by using Google Colab, which runs everything in the cloud.
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/RoshanVarghese/TextToImage/blob/main/GenAI_TextToImage_GitHub.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/RoshanVarghese/ElectricityDemandForecasts/blob/main/TS_5ED_Forecast.ipynb)
 
 2. Running Locally
 
