@@ -68,9 +68,12 @@ def load_models():
         sarimax_model = None
 
     try:
-        lstm_model = load_model('lstm_model.h5')
-    except (FileNotFoundError, IOError):
-        print("Warning: 'lstm_model.h5' not found. LSTM predictions will not be available.")
+        # Try loading with compile=False to avoid loss function deserialization issues
+        lstm_model = load_model('lstm_model.h5', compile=False)
+        print("LSTM model loaded successfully (without compilation)")
+    except Exception as e:
+        print(f"Warning: 'lstm_model.h5' could not be loaded. Error: {str(e)}")
+        print("LSTM predictions will not be available.")
         lstm_model = None
 
     try:
