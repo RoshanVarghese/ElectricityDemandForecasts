@@ -1,6 +1,6 @@
 # Electricity Demand Forecasting Dashboard
 
-This project provides an interactive web application to forecast electricity demand by leveraging climatic data. It compares the performance of three different forecasting models (Naive, SARIMAX, and LSTM) and allows users to predict future energy consumption based on expected weather conditions.
+This project provides an interactive web application to forecast electricity demand by leveraging climatic data. It compares the performance of three different forecasting models (Prophet, SARIMAX, and LSTM) and allows users to predict future energy consumption based on expected weather conditions.
 
 ## The Dataset
 
@@ -60,5 +60,7 @@ This will start a local web server, and you can access the application by naviga
 * lstm_model.h5: The pre-trained LSTM model.
 
 * scaler.pkl: The scaler object used for data normalization.
+
+* prophet_model.pkl: The pre-trained Prophet model.
 
 * README.md: This file.
