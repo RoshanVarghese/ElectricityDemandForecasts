@@ -210,6 +210,8 @@ def predict_future_demand(model_choice, start_date_str, num_days, avg_temp, avg_
             future_exog = pd.DataFrame({'Temperature': avg_temp, 'Humidity': avg_humidity}, index=future_dates)
             forecast_result = sarimax_model.get_forecast(steps=num_days, exog=future_exog)
             forecast = forecast_result.predicted_mean
+            # --- FIX: Manually set the correct index for the SARIMAX forecast ---
+            forecast.index = future_dates
         except Exception as e:
             return None, f"SARIMAX Error: {e}"
     elif model_choice == 'Prophet':
