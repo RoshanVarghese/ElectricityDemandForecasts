@@ -138,71 +138,128 @@ def create_lstm_dataset(dataset, look_back=7):
 def get_predictions(daily_df, sarimax_model, lstm_model, scaler):
     """
     Generates predictions for all models on the test set.
+    Fixed to exactly match your training methodology.
     """
-    # Split data (using 80/20 split like in training)
+    # Split data using the exact same method as training (80/20)
     train_size = int(len(daily_df) * 0.8)
-    train, test = daily_df[:train_size], daily_df[train_size:]
-
+    
+    print(f"Total data points: {len(daily_df)}")
+    print(f"Train size: {train_size}, Test size: {len(daily_df) - train_size}")
+    
+    # Split the data exactly like in training
+    train_endog = daily_df['Electric_demand'][:train_size]
+    test_endog = daily_df['Electric_demand'][train_size:]
+    
     # --- Naive Model (Baseline) ---
-    naive_preds = test['Electric_demand'].shift(1).bfill()
+    naive_preds = test_endog.shift(1).bfill()
 
     # --- SARIMAX Predictions ---
     if sarimax_model:
-        # Use the same exog variables as in training: Temperature, Humidity
-        exog_vars = ['Temperature', 'Humidity']
         try:
-            sarimax_preds = sarimax_model.predict(
-                start=len(train), 
-                end=len(train) + len(test) - 1, 
-                exog=test[exog_vars]
-            )
+            # Use the exact same exog variables and method as in training
+            exog_vars = ['Temperature', 'Humidity']
+            train_exog = daily_df[exog_vars][:train_size]
+            test_exog = daily_df[exog_vars][train_size:]
+            
+            # Align indices exactly like in training
+            train_exog.index = train_endog.index
+            test_exog.index = test_endog.index
+            
+            # Use the exact same prediction method as in training
+            start = len(train_endog)
+            end = len(train_endog) + len(test_endog) - 1
+            
+            print(f"SARIMAX prediction: start={start}, end={end}")
+            
+            sarimax_preds = sarimax_model.predict(start=start, end=end, exog=test_exog)
+            
+            # Ensure the index matches test_endog
+            sarimax_preds.index = test_endog.index
+            
         except Exception as e:
             print(f"SARIMAX prediction error: {e}")
-            sarimax_preds = pd.Series(np.zeros(len(test)), index=test.index)
+            sarimax_preds = pd.Series(np.zeros(len(test_endog)), index=test_endog.index)
     else:
-        sarimax_preds = pd.Series(np.zeros(len(test)), index=test.index)
+        sarimax_preds = pd.Series(np.zeros(len(test_endog)), index=test_endog.index)
 
     # --- LSTM Predictions ---
     if lstm_model and scaler:
         try:
-            # Use the same features as in training
+            # Use the exact same features as in training
             features = ['Electric_demand', 'Temperature', 'Humidity', 'Wind_speed', 'DHI', 'DNI', 'GHI']
             
             # Check which features are available
             available_features = [f for f in features if f in daily_df.columns]
             print(f"Available features for LSTM: {available_features}")
             
-            if len(available_features) < 3:  # Need at least Electric_demand + 2 others
-                print("Insufficient features for LSTM prediction")
-                lstm_preds = pd.Series(np.zeros(len(test)), index=test.index)
-            else:
-                # Scale the data using available features
-                scaled_data = scaler.transform(daily_df[available_features])
-                scaled_test = scaled_data[train_size:]
-
-                look_back = 7
-                X_test, y_test = create_lstm_dataset(scaled_test, look_back)
+            if len(available_features) >= 3:  # Need at least a few features
+                # Prepare data exactly like in training
+                data = daily_df[available_features].dropna()
+                
+                # Scale the data - this should match your training scaler
+                scaled_data = scaler.transform(data)
+                
+                # Create sequences exactly like in training
+                def create_sequences_exact(data, window=7):
+                    X, y = [], []
+                    for i in range(len(data) - window):
+                        # Features: all columns except target (Electric_demand is column 0)
+                        X.append(data[i:i+window, 1:])  # all features except Electric_demand
+                        y.append(data[i+window, 0])  # Electric_demand is the target
+                    return np.array(X), np.array(y)
+                
+                X, y = create_sequences_exact(scaled_data)
+                
+                # Split exactly like in training
+                train_size_lstm = int(len(X) * 0.8)
+                X_test = X[train_size_lstm:]
+                y_test_actual = y[train_size_lstm:]
 
                 if len(X_test) > 0:
                     # Make predictions
-                    lstm_scaled_preds = lstm_model.predict(X_test)
+                    lstm_scaled_preds = lstm_model.predict(X_test, verbose=0)
 
-                    # Inverse transform predictions
+                    # Inverse transform predictions exactly like in training
+                    # Create padding array with correct shape
                     pad_preds = np.zeros((lstm_scaled_preds.shape[0], len(available_features)))
-                    pad_preds[:, 0] = lstm_scaled_preds.flatten()
+                    pad_preds[:, 0] = lstm_scaled_preds.flatten()  # Put predictions in first column
+                    
+                    # Inverse transform
                     lstm_preds_unscaled = scaler.inverse_transform(pad_preds)[:, 0]
                     
-                    # Align predictions with the test set index
-                    lstm_preds = pd.Series(lstm_preds_unscaled, index=test.index[look_back:])
+                    # Create proper index for LSTM predictions
+                    # LSTM predictions start after the lookback window (7 days)
+                    lstm_start_idx = train_size + 7  # 7 is the lookback window
+                    lstm_end_idx = lstm_start_idx + len(lstm_preds_unscaled)
+                    
+                    if lstm_end_idx <= len(daily_df):
+                        lstm_index = daily_df.index[lstm_start_idx:lstm_end_idx]
+                        lstm_preds = pd.Series(lstm_preds_unscaled, index=lstm_index)
+                    else:
+                        # Handle case where we don't have enough data
+                        available_length = len(daily_df) - lstm_start_idx
+                        if available_length > 0:
+                            lstm_index = daily_df.index[lstm_start_idx:lstm_start_idx + available_length]
+                            lstm_preds = pd.Series(lstm_preds_unscaled[:available_length], index=lstm_index)
+                        else:
+                            lstm_preds = pd.Series([], dtype=float)
                 else:
                     lstm_preds = pd.Series([], dtype=float)
+            else:
+                print("Insufficient features for LSTM prediction")
+                lstm_preds = pd.Series([], dtype=float)
+                
         except Exception as e:
             print(f"LSTM prediction error: {e}")
-            lstm_preds = pd.Series(np.zeros(len(test)), index=test.index)
+            import traceback
+            traceback.print_exc()
+            lstm_preds = pd.Series([], dtype=float)
     else:
-        lstm_preds = pd.Series(np.zeros(len(test)), index=test.index)
+        lstm_preds = pd.Series([], dtype=float)
 
-    return test['Electric_demand'], naive_preds, sarimax_preds, lstm_preds
+    print(f"Prediction lengths - Actual: {len(test_endog)}, Naive: {len(naive_preds)}, SARIMAX: {len(sarimax_preds)}, LSTM: {len(lstm_preds)}")
+    
+    return test_endog, naive_preds, sarimax_preds, lstm_preds
 
 def calculate_metrics(actual, predicted):
     """
@@ -279,12 +336,16 @@ def get_metrics_df(actual, naive, sarimax, lstm):
 def predict_future_demand(start_date, num_days, avg_temp, avg_humidity, daily_df, sarimax_model, lstm_model, scaler):
     """
     Predicts future demand using the SARIMAX model (matches training setup).
+    Fixed to properly continue from the last training point.
     """
     if sarimax_model is None:
         return None, "SARIMAX model is not loaded. Cannot make future predictions."
         
     try:
         start_date = pd.to_datetime(start_date)
+        
+        # Get the last date in the dataset
+        last_date = daily_df.index.max()
         
         # Create future exogenous variables using the same format as training
         future_dates = pd.date_range(start=start_date, periods=num_days, freq='D')
@@ -293,40 +354,76 @@ def predict_future_demand(start_date, num_days, avg_temp, avg_humidity, daily_df
             'Humidity': [avg_humidity] * num_days
         }, index=future_dates)
 
+        print(f"Generating forecast from {start_date} for {num_days} days")
+        print(f"Last training date: {last_date}")
+
+        # Calculate the proper start and end indices for prediction
+        # The model was trained on the full dataset, so we continue from there
+        start_idx = len(daily_df)
+        end_idx = start_idx + num_days - 1
+        
+        print(f"Prediction indices: start={start_idx}, end={end_idx}")
+        
         # Generate forecast using predict method (same as training)
-        last_train_idx = len(daily_df) - 1
         forecast = sarimax_model.predict(
-            start=last_train_idx + 1, 
-            end=last_train_idx + num_days, 
+            start=start_idx, 
+            end=end_idx, 
             exog=future_exog
         )
+        
+        # Ensure the forecast has the correct index
+        forecast.index = future_dates
 
         # Create plot
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(forecast.index, forecast, marker='o', linestyle='-', label='Forecasted Demand', color='blue')
+        fig, ax = plt.subplots(figsize=(14, 8))
         
-        # Plot historical data for context (last 30 days)
-        historical_start = start_date - timedelta(days=30)
-        historical_end = start_date - timedelta(days=1)
+        # Plot the forecast
+        ax.plot(forecast.index, forecast, marker='o', linestyle='-', 
+               label='Forecasted Demand', color='red', linewidth=2, markersize=4)
         
-        if historical_start in daily_df.index or any(daily_df.index <= historical_end):
-            historical_context = daily_df['Electric_demand'].loc[historical_start:historical_end]
-            if len(historical_context) > 0:
-                ax.plot(historical_context.index, historical_context, color='gray', 
-                       linestyle='--', label='Historical (30 days)', alpha=0.7)
+        # Plot recent historical data for context (last 60 days)
+        historical_start = max(last_date - timedelta(days=60), daily_df.index.min())
+        historical_data = daily_df['Electric_demand'].loc[historical_start:last_date]
         
-        ax.set_title(f'Forecasted Electricity Demand for {num_days} Days\n'
-                    f'Temperature: {avg_temp}°C, Humidity: {avg_humidity}%', fontsize=14)
+        if len(historical_data) > 0:
+            ax.plot(historical_data.index, historical_data, color='blue', 
+                   linestyle='-', label='Historical Data', alpha=0.7)
+        
+        # Add a vertical line to separate historical from forecast
+        ax.axvline(x=last_date, color='gray', linestyle='--', alpha=0.7, 
+                  label='Forecast Start')
+        
+        ax.set_title(f'Electricity Demand Forecast\n'
+                    f'{num_days} days starting {start_date.strftime("%Y-%m-%d")}\n'
+                    f'Temperature: {avg_temp}°C, Humidity: {avg_humidity}%', 
+                    fontsize=14, pad=20)
         ax.set_xlabel('Date', fontsize=12)
-        ax.set_ylabel('Predicted Electricity Demand', fontsize=12)
-        ax.legend()
+        ax.set_ylabel('Electricity Demand', fontsize=12)
+        ax.legend(loc='best')
         ax.grid(True, alpha=0.3)
+        
+        # Format x-axis dates nicely
+        from matplotlib.dates import DateFormatter
+        ax.xaxis.set_major_formatter(DateFormatter('%Y-%m-%d'))
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45)
+        
         plt.tight_layout()
         
-        return fig, ""
+        # Add summary text
+        forecast_summary = f"""
+        **Forecast Summary:**
+        - Period: {start_date.strftime('%Y-%m-%d')} to {future_dates[-1].strftime('%Y-%m-%d')}
+        - Average predicted demand: {forecast.mean():.0f}
+        - Maximum predicted demand: {forecast.max():.0f}
+        - Minimum predicted demand: {forecast.min():.0f}
+        """
+        
+        return fig, forecast_summary
     
     except Exception as e:
-        return None, f"Error generating forecast: {str(e)}"
+        import traceback
+        error_details = traceback.format_exc()
+        return None, f"Error generating forecast: {str(e)}\n\nDetails:\n{error_details}"
 
 
 # --- 5. MAIN APPLICATION EXECUTION ---
@@ -390,4 +487,4 @@ if __name__ == "__main__":
                     outputs=[output_plot, error_message]
                 )
 
-    demo.launch(share=True, debug=True)
+    demo.launch(debug=True)
