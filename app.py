@@ -6,11 +6,12 @@ from statsmodels.tsa.statespace.sarimax import SARIMAXResults
 from tensorflow.keras.models import load_model
 import pickle
 from datetime import timedelta
+import functools
 
 # --- 1. DATA LOADING AND PREPROCESSING ---
 # This section contains functions to load and prepare the data, similar to your notebook.
 
-def load_and_prepare_data(filepath='Electricity.csv'):
+def load_and_prepare_data(filepath='Dataset.csv'):
     """
     Loads the electricity data and preprocesses it to a daily format.
     """
@@ -19,7 +20,7 @@ def load_and_prepare_data(filepath='Electricity.csv'):
     except FileNotFoundError:
         # Create a dummy dataframe if the file is not found, so the app can still launch.
         print("Warning: 'Electricity.csv' not found. Creating a dummy dataframe.")
-        dates = pd.to_datetime(pd.date_range(start='2017-01-01', periods=1000, freq='5T'))
+        dates = pd.date_range(start='2017-01-01', periods=1000, freq='5T')
         data = {
             'Time': dates,
             'Electric_demand': np.random.uniform(2000, 5000, 1000),
@@ -105,7 +106,7 @@ def get_predictions(daily_df, sarimax_model, lstm_model, scaler):
 
     # --- Naive Model (Baseline) ---
     # The prediction for today is simply yesterday's value.
-    naive_preds = test['DEMAND'].shift(1).bfill()
+    naive_preds = test['DEMAND'].shift(1).fillna(method='bfill')
 
     # --- SARIMAX Predictions ---
     if sarimax_model:
@@ -125,19 +126,21 @@ def get_predictions(daily_df, sarimax_model, lstm_model, scaler):
         look_back = 7 # Should be the same as used in training
         X_test, y_test = create_lstm_dataset(scaled_test, look_back)
 
-        # Make predictions
-        lstm_scaled_preds = lstm_model.predict(X_test)
+        if len(X_test) > 0:  # Only predict if we have data
+            # Make predictions
+            lstm_scaled_preds = lstm_model.predict(X_test)
 
-        # Inverse transform predictions
-        pad_preds = np.zeros((lstm_scaled_preds.shape[0], scaled_data.shape[1]))
-        pad_preds[:, 0] = lstm_scaled_preds.flatten()
-        lstm_preds_unscaled = scaler.inverse_transform(pad_preds)[:, 0]
-        
-        # Align predictions with the test set index
-        lstm_preds = pd.Series(lstm_preds_unscaled, index=test.index[look_back:])
+            # Inverse transform predictions
+            pad_preds = np.zeros((lstm_scaled_preds.shape[0], scaled_data.shape[1]))
+            pad_preds[:, 0] = lstm_scaled_preds.flatten()
+            lstm_preds_unscaled = scaler.inverse_transform(pad_preds)[:, 0]
+            
+            # Align predictions with the test set index
+            lstm_preds = pd.Series(lstm_preds_unscaled, index=test.index[look_back:])
+        else:
+            lstm_preds = pd.Series([], dtype=float)
     else:
         lstm_preds = pd.Series(np.zeros(len(test)), index=test.index)
-
 
     return test['DEMAND'], naive_preds, sarimax_preds, lstm_preds
 
@@ -147,12 +150,13 @@ def calculate_metrics(actual, predicted):
     """
     # Ensure indices are aligned and drop NaNs
     combined = pd.concat([actual, predicted], axis=1).dropna()
+    
+    if len(combined) == 0:
+        return 0, 0
+        
     actual_aligned = combined.iloc[:, 0]
     predicted_aligned = combined.iloc[:, 1]
     
-    if len(actual_aligned) == 0:
-        return 0, 0
-        
     mae = np.mean(np.abs(predicted_aligned - actual_aligned))
     rmse = np.sqrt(np.mean((predicted_aligned - actual_aligned)**2))
     return mae, rmse
@@ -166,9 +170,14 @@ def plot_model_comparison(actual, naive, sarimax, lstm):
     """
     fig, ax = plt.subplots(figsize=(14, 7))
     ax.plot(actual.index, actual, label='Actual Demand', color='black', linewidth=2)
-    ax.plot(naive.index, naive, label='Naive Forecast', color='orange', linestyle='--')
-    ax.plot(sarimax.index, sarimax, label='SARIMAX Forecast', color='blue', linestyle='--')
-    ax.plot(lstm.index, lstm, label='LSTM Forecast', color='green', linestyle='--')
+    
+    if len(naive) > 0:
+        ax.plot(naive.index, naive, label='Naive Forecast', color='orange', linestyle='--')
+    if len(sarimax) > 0:
+        ax.plot(sarimax.index, sarimax, label='SARIMAX Forecast', color='blue', linestyle='--')
+    if len(lstm) > 0:
+        ax.plot(lstm.index, lstm, label='LSTM Forecast', color='green', linestyle='--')
+        
     ax.set_title('Model Comparison: Actual vs. Forecasted Demand', fontsize=16)
     ax.set_xlabel('Date', fontsize=12)
     ax.set_ylabel('Electricity Demand', fontsize=12)
@@ -183,12 +192,17 @@ def get_metrics_df(actual, naive, sarimax, lstm):
     """
     models = {'Naive': naive, 'SARIMAX': sarimax, 'LSTM': lstm}
     metrics_data = []
+    
     for name, preds in models.items():
         mae, rmse = calculate_metrics(actual, preds)
         metrics_data.append({'Model': name, 'MAE': f'{mae:,.2f}', 'RMSE': f'{rmse:,.2f}'})
 
     metrics_df = pd.DataFrame(metrics_data)
-    best_model = metrics_df.loc[metrics_df['RMSE'].astype(float).idxmin()]
+    
+    # Find best model (lowest RMSE)
+    rmse_values = [float(row['RMSE'].replace(',', '')) for row in metrics_data]
+    best_idx = np.argmin(rmse_values)
+    best_model = metrics_data[best_idx]['Model']
 
     summary = f"""
     ### Model Performance Summary
@@ -196,7 +210,7 @@ def get_metrics_df(actual, naive, sarimax, lstm):
     - **MAE**: The average absolute difference between the forecast and the actual value.
     - **RMSE**: The square root of the average of squared differences, which penalizes larger errors more.
 
-    **🏆 Best Performing Model:** **{best_model['Model']}**
+    **🏆 Best Performing Model:** **{best_model}**
     
     This model achieved the lowest RMSE, indicating it had the highest overall accuracy in predicting electricity demand during the test period.
     """
@@ -209,34 +223,43 @@ def predict_future_demand(start_date, num_days, avg_temp, avg_humidity, daily_df
     if sarimax_model is None:
         return None, "SARIMAX model is not loaded. Cannot make future predictions."
         
-    start_date = pd.to_datetime(start_date)
-    
-    # Create future exogenous variables
-    future_dates = pd.date_range(start=start_date, periods=num_days, freq='D')
-    future_exog = pd.DataFrame({
-        'TEMPERATURE': [avg_temp] * num_days,
-        'HUMIDITY': [avg_humidity] * num_days
-    }, index=future_dates)
+    try:
+        start_date = pd.to_datetime(start_date)
+        
+        # Create future exogenous variables
+        future_dates = pd.date_range(start=start_date, periods=num_days, freq='D')
+        future_exog = pd.DataFrame({
+            'TEMPERATURE': [avg_temp] * num_days,
+            'HUMIDITY': [avg_humidity] * num_days
+        }, index=future_dates)
 
-    # Generate forecast
-    forecast = sarimax_model.get_forecast(steps=num_days, exog=future_exog).predicted_mean
+        # Generate forecast
+        forecast = sarimax_model.get_forecast(steps=num_days, exog=future_exog).predicted_mean
 
-    # Create plot
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(forecast.index, forecast, marker='o', linestyle='-', label='Forecasted Demand')
+        # Create plot
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.plot(forecast.index, forecast, marker='o', linestyle='-', label='Forecasted Demand')
+        
+        # Plot historical data for context
+        historical_start = start_date - timedelta(days=30)
+        historical_end = start_date - timedelta(days=1)
+        
+        if historical_start in daily_df.index or any(daily_df.index <= historical_end):
+            historical_context = daily_df['DEMAND'].loc[historical_start:historical_end]
+            if len(historical_context) > 0:
+                ax.plot(historical_context.index, historical_context, color='gray', linestyle='--', label='Historical (30 days)')
+        
+        ax.set_title(f'Forecasted Electricity Demand for {num_days} Days', fontsize=16)
+        ax.set_xlabel('Date', fontsize=12)
+        ax.set_ylabel('Predicted Electricity Demand', fontsize=12)
+        ax.legend()
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+        plt.tight_layout()
+        
+        return fig, ""
     
-    # Plot historical data for context
-    historical_context = daily_df['DEMAND'].loc[start_date - timedelta(days=30):start_date - timedelta(days=1)]
-    ax.plot(historical_context.index, historical_context, color='gray', linestyle='--', label='Historical (30 days)')
-    
-    ax.set_title(f'Forecasted Electricity Demand for {num_days} Days', fontsize=16)
-    ax.set_xlabel('Date', fontsize=12)
-    ax.set_ylabel('Predicted Electricity Demand', fontsize=12)
-    ax.legend()
-    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
-    plt.tight_layout()
-    
-    return fig, ""
+    except Exception as e:
+        return None, f"Error generating forecast: {str(e)}"
 
 
 # --- 5. MAIN APPLICATION EXECUTION ---
@@ -246,6 +269,14 @@ if __name__ == "__main__":
     sarimax_model, lstm_model, scaler = load_models()
     actual, naive, sarimax, lstm = get_predictions(daily_df, sarimax_model, lstm_model, scaler)
     metrics_df, summary_text = get_metrics_df(actual, naive, sarimax, lstm)
+
+    # Create a wrapper function that has access to the loaded models and data
+    def wrapped_predict_future_demand(start_date, num_days, avg_temp, avg_humidity):
+        fig, err = predict_future_demand(start_date, num_days, avg_temp, avg_humidity, 
+                                       daily_df, sarimax_model, lstm_model, scaler)
+        if err:
+            return None, err
+        return fig, ""
 
     # --- Build Gradio Interface ---
     with gr.Blocks(theme=gr.themes.Soft(), title="Electricity Demand Forecaster") as demo:
@@ -271,52 +302,25 @@ if __name__ == "__main__":
                 
                 with gr.Row():
                     with gr.Column():
-                        start_date_input = gr.Date(label="Forecasting Start Date", value=daily_df.index.max() + timedelta(days=1))
-                        days_input = gr.Slider(minimum=1, maximum=90, value=14, step=1, label="Number of Days to Forecast")
-                        temp_input = gr.Slider(minimum=-10, maximum=50, value=25, label="Expected Average Temperature (°C)")
-                        humidity_input = gr.Slider(minimum=0, maximum=100, value=60, label="Expected Average Humidity (%)")
+                        start_date_input = gr.Date(label="Forecasting Start Date", 
+                                                 value=str(daily_df.index.max() + timedelta(days=1)))
+                        days_input = gr.Slider(minimum=1, maximum=90, value=14, step=1, 
+                                             label="Number of Days to Forecast")
+                        temp_input = gr.Slider(minimum=-10, maximum=50, value=25, 
+                                             label="Expected Average Temperature (°C)")
+                        humidity_input = gr.Slider(minimum=0, maximum=100, value=60, 
+                                                 label="Expected Average Humidity (%)")
                         predict_btn = gr.Button("Generate Forecast", variant="primary")
                     
                     with gr.Column():
                         output_plot = gr.Plot()
                         error_message = gr.Markdown(visible=False)
 
-                predict_btn.click(
-                    fn=predict_future_demand,
-                    inputs=[start_date_input, days_input, temp_input, humidity_input],
-                    outputs=[output_plot, error_message],
-                    # Pass additional arguments needed by the function
-                    api_name="predict_future",
-                    # Add extra arguments using a lambda
-                    _js="""(start_date, num_days, avg_temp, avg_humidity) => 
-                        [start_date, num_days, avg_temp, avg_humidity, daily_df, sarimax_model, lstm_model, scaler]
-                    """,
-                    # Gradio doesn't directly support passing non-component args like this.
-                    # A better way is to use global variables (loaded once) or functools.partial.
-                    # For simplicity in this example, we rely on the global scope variables.
-                ).then(
-                    lambda: (daily_df, sarimax_model, lstm_model, scaler),
-                    None,
-                    None,
-                )
-                
-                # Correct way to handle additional arguments in Gradio
-                # The function needs access to variables loaded outside the click event.
-                # Gradio's `click` method can't pass these directly.
-                # The function `predict_future_demand` will access them from the global scope,
-                # which is fine for this standalone script.
-                
-                def wrapped_predict_future_demand(start_date, num_days, avg_temp, avg_humidity):
-                    fig, err = predict_future_demand(start_date, num_days, avg_temp, avg_humidity, daily_df, sarimax_model, lstm_model, scaler)
-                    if err:
-                        return None, gr.Markdown(value=err, visible=True)
-                    return fig, gr.Markdown(visible=False)
-
+                # Clean event handler
                 predict_btn.click(
                     fn=wrapped_predict_future_demand,
                     inputs=[start_date_input, days_input, temp_input, humidity_input],
                     outputs=[output_plot, error_message]
                 )
-
 
     demo.launch(debug=True)
