@@ -6,15 +6,15 @@ This project provides an interactive web application to forecast electricity dem
 
 The data used in this project is publicly available and was sourced from Mendeley Data.
 
-Title: Electricity demand and weather data for Texas
+* Title: Electricity demand and weather data for Texas
 
-Date: 27 April 2023
+* Date: 27 April 2023
 
-Source: Mendeley Data, V1, doi: 10.17632/fdfftr3tc2.1
+* Source: Mendeley Data, V1, doi: 10.17632/fdfftr3tc2.1
 
-Description: The dataset contains electricity demand, temperature, and humidity data for Texas, recorded at 5-minute intervals from January 1, 2019, to December 31, 2021. For this project, the data was aggregated to a daily timescale to analyze and forecast overall daily demand.
+* Description: The dataset contains electricity demand, temperature, and humidity data for Texas, recorded at 5-minute intervals from January 1, 2019, to December 31, 2021. For this project, the data was aggregated to a daily timescale to analyze and forecast overall daily demand.
 
-Citation:
+* Citation:
 Rojas Ortega, Sebastian; Castro-Correa, Paola; Sepúlveda-Mora, Sergio; Castro-Correa, Jhon (2023), “Renewable Energy and Electricity Demand Time Series Dataset with Exogenous Variables at 5-minute Interval”, Mendeley Data, V1, doi: 10.17632/fdfftr3tc2.1
 
 ## How to Run the Application
