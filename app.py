@@ -35,33 +35,48 @@ def load_and_prepare_data(filepath='Dataset.csv'):
         }
         df = pd.DataFrame(data)
 
-    # Use the exact column names from your training data
-    if 'DateTime' not in df.columns and len(df.columns) > 0:
-        print("Warning: 'DateTime' column not found. Assuming the first column is the datetime column.")
-        df.rename(columns={df.columns[0]: 'DateTime'}, inplace=True)
+    # Handle the Time column correctly
+    if 'Time' in df.columns:
+        print("Using 'Time' column as datetime index")
+        df['DateTime'] = pd.to_datetime(df['Time'])
+    elif 'DateTime' not in df.columns and len(df.columns) > 0:
+        print("Warning: No 'Time' or 'DateTime' column found. Using first column as datetime.")
+        df['DateTime'] = pd.to_datetime(df.iloc[:, 0])
+    
+    # Drop the original Time column and any unnamed columns
+    if 'Time' in df.columns:
+        df = df.drop('Time', axis=1)
+    if 'Unnamed: 0' in df.columns:
+        df = df.drop('Unnamed: 0', axis=1)
 
-    df['DateTime'] = pd.to_datetime(df['DateTime'])
     df.set_index('DateTime', inplace=True)
 
+    print(f"Data after datetime processing: {df.shape}")
+    print(f"Date range: {df.index.min()} to {df.index.max()}")
+
     # Check if we need to resample to daily data
-    if len(df) > 365 * 3:  # If more than 3 years of data, likely sub-daily
-        print("Resampling to daily data...")
+    time_diff = df.index[1] - df.index[0] if len(df) > 1 else pd.Timedelta(days=1)
+    
+    if time_diff < pd.Timedelta(hours=23):  # Sub-daily data
+        print(f"Detected sub-daily data (interval: {time_diff}). Resampling to daily...")
         # Aggregate to daily data using the exact column names from training
-        daily_df = df.resample('D').agg({
-            'Electric_demand': 'sum',
-            'Temperature': 'mean',
-            'Humidity': 'mean',
-            'Wind_speed': 'mean' if 'Wind_speed' in df.columns else 'first',
-            'DHI': 'mean' if 'DHI' in df.columns else 'first',
-            'DNI': 'mean' if 'DNI' in df.columns else 'first',
-            'GHI': 'mean' if 'GHI' in df.columns else 'first'
-        })
+        agg_dict = {}
+        for col in df.columns:
+            if col == 'Electric_demand':
+                agg_dict[col] = 'sum'  # Sum for demand
+            else:
+                agg_dict[col] = 'mean'  # Mean for other variables
+        
+        daily_df = df.resample('D').agg(agg_dict)
     else:
+        print("Data appears to be daily or less frequent. No resampling needed.")
         daily_df = df.copy()
     
     daily_df.interpolate(method='linear', inplace=True)
+    daily_df = daily_df.dropna()  # Remove any remaining NaN values
+    
     print(f"Final daily data shape: {daily_df.shape}")
-    print(f"Date range: {daily_df.index.min()} to {daily_df.index.max()}")
+    print(f"Final date range: {daily_df.index.min()} to {daily_df.index.max()}")
     return daily_df
 
 # --- 2. LOAD PRE-TRAINED MODELS ---
@@ -129,7 +144,7 @@ def get_predictions(daily_df, sarimax_model, lstm_model, scaler):
     train, test = daily_df[:train_size], daily_df[train_size:]
 
     # --- Naive Model (Baseline) ---
-    naive_preds = test['Electric_demand'].shift(1).fillna(method='bfill')
+    naive_preds = test['Electric_demand'].shift(1).bfill()
 
     # --- SARIMAX Predictions ---
     if sarimax_model:
@@ -354,8 +369,8 @@ if __name__ == "__main__":
                 
                 with gr.Row():
                     with gr.Column():
-                        start_date_input = gr.Date(label="Forecasting Start Date", 
-                                                 value=str(daily_df.index.max() + timedelta(days=1)))
+                        start_date_input = gr.Textbox(label="Forecasting Start Date (YYYY-MM-DD)", 
+                                                    value=str(daily_df.index.max() + timedelta(days=1)).split()[0])
                         days_input = gr.Slider(minimum=1, maximum=90, value=14, step=1, 
                                              label="Number of Days to Forecast")
                         temp_input = gr.Slider(minimum=-10, maximum=50, value=25, 
