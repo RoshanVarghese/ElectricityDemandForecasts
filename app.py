@@ -390,4 +390,4 @@ if __name__ == "__main__":
                     outputs=[output_plot, error_message]
                 )
 
-    demo.launch(debug=True)
+    demo.launch(share=True, debug=True)
