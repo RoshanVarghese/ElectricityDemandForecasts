@@ -27,7 +27,7 @@ def load_and_prepare_data(filepath='Dataset.csv'):
         }
         df = pd.DataFrame(data)
 
-    # --- FIX: Keep original 'Electric_demand' name for scaler compatibility ---
+    # Standardize column names
     df.rename(columns={'Time': 'DateTime'}, inplace=True)
     if 'DateTime' not in df.columns:
         print("Warning: 'DateTime' column not found. Using the first column.")
@@ -38,10 +38,9 @@ def load_and_prepare_data(filepath='Dataset.csv'):
 
     # Ensure data is daily. If not, resample.
     if len(df) > 1 and (df.index[1] - df.index[0]) < pd.Timedelta(days=1):
-        print("Sub-daily data detected. Resampling to daily sums for Electric_demand and means for others.")
-        agg_rules = {col: 'mean' for col in df.columns if col != 'Electric_demand'}
-        agg_rules['Electric_demand'] = 'sum'
-        daily_df = df.resample('D').agg(agg_rules)
+        print("Sub-daily data detected. Resampling to daily means.")
+        # --- FIX: Aggregate all columns by mean to match the training notebook ---
+        daily_df = df.resample('D').mean()
     else:
         daily_df = df
 
@@ -113,12 +112,16 @@ def get_predictions(daily_df, sarimax_model, lstm_model, scaler):
     # --- LSTM Predictions ---
     if lstm_model and scaler:
         try:
-            # --- FIX: Use the original feature names the scaler was trained on ---
+            # The scaler was fit on these features in this order during training
             feature_cols = ['Electric_demand', 'Temperature', 'Humidity', 'Wind_speed', 'DHI', 'DNI', 'GHI']
             
+            # Create the full dataset with the correct feature order
             full_data_for_scaling = daily_df[feature_cols]
+            
+            # Scale the entire dataset
             scaled_data = scaler.transform(full_data_for_scaling)
             
+            # Create sequences (X) and targets (y)
             look_back = 7
             X, y = [], []
             for i in range(len(scaled_data) - look_back):
@@ -126,15 +129,22 @@ def get_predictions(daily_df, sarimax_model, lstm_model, scaler):
                 y.append(scaled_data[i + look_back, 0])      # Target is Electric_demand (first column)
             X, y = np.array(X), np.array(y)
 
+            # Split sequences into train/test sets
             seq_train_size = int(len(X) * 0.8)
             X_test = X[seq_train_size:]
             
+            # Generate predictions
             lstm_scaled_preds = lstm_model.predict(X_test).flatten()
 
+            # **CRITICAL FIX**: Inverse transform the predictions correctly
+            # Create a dummy array with the same shape as the original data
             dummy_array = np.zeros((len(lstm_scaled_preds), len(feature_cols)))
+            # Place the scaled predictions into the first column (for Electric_demand)
             dummy_array[:, 0] = lstm_scaled_preds
+            # Inverse transform the entire dummy array
             lstm_preds_unscaled = scaler.inverse_transform(dummy_array)[:, 0]
 
+            # Align predictions with the correct dates in the test set
             pred_start_index = actuals.index[look_back + (len(y) - len(X_test) - seq_train_size)]
             pred_dates = pd.date_range(start=pred_start_index, periods=len(lstm_preds_unscaled))
             lstm_preds = pd.Series(lstm_preds_unscaled, index=pred_dates)
@@ -206,14 +216,15 @@ def predict_future_demand(start_date_str, num_days, avg_temp, avg_humidity, dail
         future_dates = pd.date_range(start=start_date, periods=num_days, freq='D')
         future_exog = pd.DataFrame({'Temperature': avg_temp, 'Humidity': avg_humidity}, index=future_dates)
 
+        # The model was trained on the full dataset, so we continue from its end
         start_idx = len(daily_df)
         end_idx = start_idx + num_days - 1
         
         forecast = sarimax_model.predict(start=start_idx, end=end_idx, exog=future_exog)
         forecast.index = future_dates
 
+        # Create Plot
         fig, ax = plt.subplots(figsize=(12, 6))
-        # --- FIX: Use 'Electric_demand' for historical plot ---
         historical_context = daily_df['Electric_demand'].last('60D')
         ax.plot(historical_context.index, historical_context, label='Historical Demand (Last 60 Days)', color='blue')
         ax.plot(forecast.index, forecast, label='Forecasted Demand', color='red', marker='o', linestyle='--')
@@ -239,11 +250,13 @@ def predict_future_demand(start_date_str, num_days, avg_temp, avg_humidity, dail
 
 # --- 5. MAIN APPLICATION EXECUTION ---
 if __name__ == "__main__":
+    # Load data and models once at startup
     daily_df = load_and_prepare_data('Dataset.csv')
     sarimax_model, lstm_model, scaler = load_models()
     actual, naive, sarimax, lstm = get_predictions(daily_df, sarimax_model, lstm_model, scaler)
     metrics_df, summary_text = get_metrics_df(actual, naive, sarimax, lstm)
 
+    # --- Build Gradio Interface ---
     with gr.Blocks(theme=gr.themes.Soft(), title="Electricity Demand Forecaster") as demo:
         gr.Markdown("# ⚡ Electricity Demand Forecasting Dashboard")
         
