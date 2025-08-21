@@ -31,18 +31,18 @@ The easiest way to get started is by using Google Colab, which runs everything i
 
 To run the application on your own computer, follow these steps:
 
-Step A: Clone the Repository
+  * Step A: Clone the Repository
 Open your terminal and clone this repository to your local machine.
 
 git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY_NAME.git
 cd YOUR_REPOSITORY_NAME
 
-Step B: Install Dependencies
+  * Step B: Install Dependencies
 Install all the required Python libraries using pip.
 
 pip install gradio pandas numpy matplotlib statsmodels tensorflow scikit-learn
 
-Step C: Launch the App
+  * Step C: Launch the App
 Run the main application script from your terminal.
 
 python app.py
@@ -51,14 +51,14 @@ This will start a local web server, and you can access the application by naviga
 
 ## Project Files
 
-app.py: The main Python script that runs the Gradio web application.
+* app.py: The main Python script that runs the Gradio web application.
 
-Dataset.csv: The dataset file.
+* Dataset.csv: The dataset file.
 
-sarimax_model.pkl: The pre-trained SARIMAX model.
+* sarimax_model.pkl: The pre-trained SARIMAX model.
 
-lstm_model.h5: The pre-trained LSTM model.
+* lstm_model.h5: The pre-trained LSTM model.
 
-scaler.pkl: The scaler object used for data normalization.
+* scaler.pkl: The scaler object used for data normalization.
 
-README.md: This file.
+* README.md: This file.
