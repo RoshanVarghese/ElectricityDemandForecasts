@@ -8,7 +8,9 @@ import pickle
 from datetime import timedelta
 
 # --- 1. DATA LOADING AND PREPROCESSING ---
-def load_and_prepare_data(filepath='Dataset.csv'):
+# This section contains functions to load and prepare the data, similar to your notebook.
+
+def load_and_prepare_data(filepath='Electricity.csv'):
     """
     Loads the electricity data and preprocesses it to a daily format.
     """
@@ -19,12 +21,25 @@ def load_and_prepare_data(filepath='Dataset.csv'):
         print("Warning: 'Electricity.csv' not found. Creating a dummy dataframe.")
         dates = pd.to_datetime(pd.date_range(start='2017-01-01', periods=1000, freq='5T'))
         data = {
-            'DateTime': dates,
-            'DEMAND': np.random.uniform(2000, 5000, 1000),
-            'TEMPERATURE': np.random.uniform(10, 35, 1000),
-            'HUMIDITY': np.random.uniform(30, 90, 1000)
+            'Time': dates,
+            'Electric_demand': np.random.uniform(2000, 5000, 1000),
+            'Temperature': np.random.uniform(10, 35, 1000),
+            'Humidity': np.random.uniform(30, 90, 1000)
         }
         df = pd.DataFrame(data)
+
+    # --- FIX: Use the correct column names from the user's new dataset ---
+    # Rename columns for consistency within the script
+    df.rename(columns={
+        'Time': 'DateTime',
+        'Electric_demand': 'DEMAND',
+        'Temperature': 'TEMPERATURE',
+        'Humidity': 'HUMIDITY' # Assuming 'Humidity' is the correct name
+    }, inplace=True)
+
+    if 'DateTime' not in df.columns:
+         print("Warning: 'DateTime' column not found after renaming. Assuming the first column is the datetime column.")
+         df.rename(columns={df.columns[0]: 'DateTime'}, inplace=True)
 
     df['DateTime'] = pd.to_datetime(df['DateTime'])
     df.set_index('DateTime', inplace=True)
@@ -39,6 +54,8 @@ def load_and_prepare_data(filepath='Dataset.csv'):
     return daily_df
 
 # --- 2. LOAD PRE-TRAINED MODELS ---
+# We load the models and the scaler you saved from your notebook.
+
 def load_models():
     """
     Loads the pre-trained SARIMAX model, LSTM model, and the scaler.
@@ -65,6 +82,8 @@ def load_models():
     return sarimax_model, lstm_model, scaler
 
 # --- 3. MODEL PREDICTION FUNCTIONS ---
+# These functions will generate predictions from the loaded models.
+
 def create_lstm_dataset(dataset, look_back=7):
     """
     Creates the feature/label dataset for the LSTM model.
@@ -85,17 +104,22 @@ def get_predictions(daily_df, sarimax_model, lstm_model, scaler):
     train, test = daily_df[0:train_size], daily_df[train_size:]
 
     # --- Naive Model (Baseline) ---
+    # The prediction for today is simply yesterday's value.
     naive_preds = test['DEMAND'].shift(1).bfill()
 
     # --- SARIMAX Predictions ---
     if sarimax_model:
+        # --- FIX: Ensure correct column names are used for exogenous variables ---
         sarimax_preds = sarimax_model.get_forecast(steps=len(test), exog=test[['TEMPERATURE', 'HUMIDITY']]).predicted_mean
     else:
         sarimax_preds = pd.Series(np.zeros(len(test)), index=test.index)
 
+
     # --- LSTM Predictions ---
     if lstm_model and scaler:
-        scaled_data = scaler.transform(daily_df)
+        # The scaler expects columns in the order: DEMAND, TEMPERATURE, HUMIDITY
+        # Ensure the dataframe passed to the scaler has this order
+        scaled_data = scaler.transform(daily_df[['DEMAND', 'TEMPERATURE', 'HUMIDITY']])
         scaled_test = scaled_data[train_size:]
 
         look_back = 7 # Should be the same as used in training
@@ -113,6 +137,7 @@ def get_predictions(daily_df, sarimax_model, lstm_model, scaler):
         lstm_preds = pd.Series(lstm_preds_unscaled, index=test.index[look_back:])
     else:
         lstm_preds = pd.Series(np.zeros(len(test)), index=test.index)
+
 
     return test['DEMAND'], naive_preds, sarimax_preds, lstm_preds
 
@@ -133,6 +158,8 @@ def calculate_metrics(actual, predicted):
     return mae, rmse
 
 # --- 4. GRADIO INTERFACE FUNCTIONS ---
+# These functions will be called by the Gradio components.
+
 def plot_model_comparison(actual, naive, sarimax, lstm):
     """
     Creates a plot comparing the actual demand vs. model predictions.
@@ -210,6 +237,7 @@ def predict_future_demand(start_date, num_days, avg_temp, avg_humidity, daily_df
     plt.tight_layout()
     
     return fig, ""
+
 
 # --- 5. MAIN APPLICATION EXECUTION ---
 if __name__ == "__main__":
