@@ -72,9 +72,17 @@ def load_models():
         lstm_model = load_model('lstm_model.h5', compile=False)
         print("LSTM model loaded successfully (without compilation)")
     except Exception as e:
-        print(f"Warning: 'lstm_model.h5' could not be loaded. Error: {str(e)}")
-        print("LSTM predictions will not be available.")
-        lstm_model = None
+        print(f"Warning: 'lstm_model.h5' could not be loaded with compile=False. Error: {str(e)}")
+        try:
+            # Alternative approach: try with custom_objects
+            import tensorflow.keras.losses as losses
+            custom_objects = {'mse': losses.MeanSquaredError()}
+            lstm_model = load_model('lstm_model.h5', custom_objects=custom_objects)
+            print("LSTM model loaded successfully with custom_objects")
+        except Exception as e2:
+            print(f"Warning: Alternative loading method also failed. Error: {str(e2)}")
+            print("LSTM predictions will not be available.")
+            lstm_model = None
 
     try:
         with open('scaler.pkl', 'rb') as f:
