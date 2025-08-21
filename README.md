@@ -34,8 +34,8 @@ To run the application on your own computer, follow these steps:
   * Step A: Clone the Repository
 Open your terminal and clone this repository to your local machine.
 
-git clone https://github.com/YOUR_USERNAME/YOUR_REPOSITORY_NAME.git
-cd YOUR_REPOSITORY_NAME
+git clone [https://github.com/YOUR_USERNAME/YOUR_REPOSITORY_NAME.git](https://github.com/RoshanVarghese/ElectricityDemandForecasts.git)
+cd ElectricityDemandForecasts
 
   * Step B: Install Dependencies
 Install all the required Python libraries using pip.
